@@ -916,7 +916,12 @@ class _AxisTaskPanel:
                 item = QtGui.QTreeWidgetItem(self.tree)
                 item.setText(0, str(i + 1))
                 if len(self.obj.Distances) > i:
-                    item.setText(1, str(self.obj.Distances[i]))
+                    item.setText(
+                        1,
+                        FreeCAD.Units.Quantity(
+                            self.obj.Distances[i], FreeCAD.Units.Length
+                        ).UserString,
+                    )
                 if len(self.obj.Angles) > i:
                     item.setText(2, str(self.obj.Angles[i]))
                 if hasattr(self.obj, "Labels"):
@@ -931,7 +936,9 @@ class _AxisTaskPanel:
 
         item = QtGui.QTreeWidgetItem(self.tree)
         item.setText(0, str(self.tree.topLevelItemCount()))
-        item.setText(1, "1.0")
+        item.setText(
+            1, FreeCAD.Units.Quantity(1000, FreeCAD.Units.Length).UserString
+        )
         item.setText(2, "0.0")
         item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
         self.resetObject()
@@ -959,7 +966,13 @@ class _AxisTaskPanel:
             it = self.tree.findItems(str(i + 1), QtCore.Qt.MatchExactly, 0)[0]
             if (remove is None) or (remove != i):
                 if it.text(1):
-                    d.append(float(it.text(1)))
+                    try:
+                        d.append(FreeCAD.Units.Quantity(it.text(1)).Value)
+                    except Exception:
+                        pref_factor = FreeCAD.Units.Quantity(
+                            1, FreeCAD.Units.Length
+                        ).getUserPreferred()[1]
+                        d.append(float(it.text(1)) * pref_factor)
                 else:
                     d.append(0.0)
                 if it.text(2):
@@ -986,7 +999,7 @@ class _AxisTaskPanel:
         self.addButton.setText(QtGui.QApplication.translate("Arch", "Add", None))
         self.title.setText(
             QtGui.QApplication.translate(
-                "Arch", "Distances (mm) and angles (deg) between axes", None
+                "Arch", "Distances and angles (deg) between axes", None
             )
         )
         self.tree.setHeaderLabels(
