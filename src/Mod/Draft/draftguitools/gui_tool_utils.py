@@ -182,11 +182,13 @@ def select_object(arg):
     """
     if arg["Type"] == "SoKeyboardEvent":
         if arg["Key"] == "ESCAPE":
-            App.activeDraftCommand.finish()
+            if App.activeDraftCommand:
+                App.activeDraftCommand.finish()
             # TODO: this part raises a coin3D warning about scene traversal.
             # It needs to be fixed.
     elif not arg["CtrlDown"] and Gui.Selection.hasSelection():
-        App.activeDraftCommand.proceed()
+        if App.activeDraftCommand:
+            App.activeDraftCommand.proceed()
 
 
 selectObject = select_object

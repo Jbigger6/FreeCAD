@@ -91,6 +91,8 @@
         <file>icons/Arch_Window_Tree.svg</file>
         <file>icons/BIMWorkbench.svg</file>
         <file>icons/BIM_ArchView.svg</file>
+        <file>icons/BIM_3DView.svg</file>
+        <file>icons/BIM_Align.svg</file>
         <file>icons/BIM_Background.svg</file>
         <file>icons/BIM_Beam.svg</file>
         <file>icons/BIM_Box.svg</file>

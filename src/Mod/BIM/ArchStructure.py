@@ -236,6 +236,8 @@ class _CommandStructure:
         self.Profile = None
         self.bpoint = None
         self.precastvalues = None
+        if not hasattr(self, "refPoint"):
+            self.refPoint = (0, 0)  # (rx, ry) reference corner; (0,0)=center
         sel = FreeCADGui.Selection.getSelection()
         if sel:
             st = Draft.getObjectsOfType(sel, "Structure")
@@ -389,6 +391,14 @@ class _CommandStructure:
                 + ")"
             )
         else:
+            # Apply reference point offset so the chosen corner lands at the click
+            rx, ry = getattr(self, "refPoint", (0, 0))
+            if rx != 0 or ry != 0:
+                ref_offset = self.wp.get_global_coords(
+                    Vector(-rx * self.Length / 2, -ry * self.Width / 2, 0),
+                    as_vector=True,
+                )
+                point = point.add(ref_offset)
             FreeCADGui.doCommand("s.Placement.Base = " + DraftVecUtils.toString(point))
             FreeCADGui.doCommand("wp = WorkingPlane.get_working_plane()")
             FreeCADGui.doCommand(
@@ -480,6 +490,48 @@ class _CommandStructure:
         value5 = QtGui.QPushButton(translate("Arch", "Switch Length/Width"))
         grid.addWidget(value5, 7, 1, 1, 1)
 
+        # reference point grid (column mode only)
+        labelref = QtGui.QLabel(translate("Arch", "Reference Point"))
+        grid.addWidget(labelref, 8, 0, 1, 2)
+
+        refWidget = QtGui.QWidget()
+        refGrid = QtGui.QGridLayout(refWidget)
+        refGrid.setSpacing(2)
+        refGrid.setContentsMargins(0, 0, 0, 0)
+        refGroup = QtGui.QButtonGroup(refWidget)
+        refGroup.setExclusive(True)
+        self.refButtons = {}
+        for rx, ry, arrow in [
+            (-1, 1, "↖"), (0, 1, "↑"), (1, 1, "↗"),
+            (-1, 0, "←"), (0, 0, "●"), (1, 0, "→"),
+            (-1,-1, "↙"), (0,-1, "↓"), (1,-1, "↘"),
+        ]:
+            btn = QtGui.QToolButton()
+            btn.setText(arrow)
+            btn.setCheckable(True)
+            btn.setFixedSize(28, 28)
+            btn.setChecked(rx == self.refPoint[0] and ry == self.refPoint[1])
+            refGrid.addWidget(btn, 1 - ry, rx + 1)
+            refGroup.addButton(btn)
+            self.refButtons[(rx, ry)] = btn
+            btn.toggled.connect(
+                lambda checked, x=rx, y=ry: checked and self.setRefPoint(x, y)
+            )
+        grid.addWidget(refWidget, 9, 0, 1, 2)
+
+        # hide reference point controls when in beam mode
+        is_column = self.mode == StructureMode.COLUMN
+        labelref.setVisible(is_column)
+        refWidget.setVisible(is_column)
+
+        def _onModeToggled():
+            col = self.modec.isChecked()
+            labelref.setVisible(col)
+            refWidget.setVisible(col)
+
+        self.modeb.toggled.connect(lambda _: _onModeToggled())
+        self.modec.toggled.connect(lambda _: _onModeToggled())
+
         # connect slots
         QtCore.QObject.connect(
             self.valuec, QtCore.SIGNAL("currentIndexChanged(int)"), self.setCategory
@@ -526,7 +578,15 @@ class _CommandStructure:
                 delta = Vector(self.Length / 2, 0, 0)
             delta = self.wp.get_global_coords(delta, as_vector=True)
             if self.mode == StructureMode.COLUMN:
-                self.tracker.pos(point.add(delta))
+                rx, ry = getattr(self, "refPoint", (0, 0))
+                if rx != 0 or ry != 0:
+                    ref_offset = self.wp.get_global_coords(
+                        Vector(-rx * self.Length / 2, -ry * self.Width / 2, 0),
+                        as_vector=True,
+                    )
+                    self.tracker.pos(point.add(delta).add(ref_offset))
+                else:
+                    self.tracker.pos(point.add(delta))
                 self.tracker.on()
             else:
                 if self.bpoint:
@@ -541,6 +601,12 @@ class _CommandStructure:
 
     def _paramPrefix(self):
         return "Beam" if self.mode == StructureMode.BEAM else "Column"
+
+    def setRefPoint(self, rx, ry):
+        self.refPoint = (rx, ry)
+        if hasattr(self, "refButtons"):
+            for (bx, by), btn in self.refButtons.items():
+                btn.setChecked(bx == rx and by == ry)
 
     def setWidth(self, d):
 

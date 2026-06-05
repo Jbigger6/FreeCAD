@@ -133,6 +133,7 @@ class BIMWorkbench(Workbench):
             "Draft_Rotate",
             "Draft_Scale",
             "Draft_Mirror",
+            "BIM_Align",
             "BIM_CloneTools",
             "BIM_Copy",
             "BIM_SimpleCopy",

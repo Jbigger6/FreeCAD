@@ -94,6 +94,10 @@ class BIM_Views:
                 ("Isolate", translate("BIM", "Isolate")),
                 ("SaveView", translate("BIM", "Save View Position")),
                 ("Rename", translate("BIM", "Rename")),
+                ("AddNamedView", translate("BIM", "Add Floor Plan View...")),
+                ("SaveNamedOverrides", translate("BIM", "Save View Overrides")),
+                ("DeleteNamedView", translate("BIM", "Delete View")),
+                ("RenameNamedView", translate("BIM", "Rename View")),
             ]:
                 action = QtGui.QAction(button[1])
 
@@ -115,6 +119,10 @@ class BIM_Views:
             self.dialog.buttonIsolate.setIcon(QtGui.QIcon(":/icons/Std_ShowSelection.svg"))
             self.dialog.buttonSaveView.setIcon(QtGui.QIcon(":/icons/Std_ViewScreenShot.svg"))
             self.dialog.buttonRename.setIcon(QtGui.QIcon(":/icons/edit-edit.svg"))
+            self.dialog.buttonAddNamedView.setIcon(QtGui.QIcon(":/icons/BIM_WPView.svg"))
+            self.dialog.buttonSaveNamedOverrides.setIcon(QtGui.QIcon(":/icons/Std_ViewScreenShot.svg"))
+            self.dialog.buttonDeleteNamedView.setIcon(QtGui.QIcon(":/icons/delete.svg"))
+            self.dialog.buttonRenameNamedView.setIcon(QtGui.QIcon(":/icons/edit-edit.svg"))
 
             # set tooltips
             self.dialog.buttonAddLevel.setToolTip(translate("BIM", "Creates a new level"))
@@ -133,6 +141,18 @@ class BIM_Views:
             )
             self.dialog.buttonRename.setToolTip(translate("BIM", "Renames the selected item"))
             self.dialog.buttonActive.setToolTip(translate("BIM", "Activates the selected item"))
+            self.dialog.buttonAddNamedView.setToolTip(
+                translate("BIM", "Add a named floor plan view to this level")
+            )
+            self.dialog.buttonSaveNamedOverrides.setToolTip(
+                translate("BIM", "Save current visibility state as overrides for this view")
+            )
+            self.dialog.buttonDeleteNamedView.setToolTip(
+                translate("BIM", "Delete this named view")
+            )
+            self.dialog.buttonRenameNamedView.setToolTip(
+                translate("BIM", "Rename this named view")
+            )
 
             # connect signals
             self.dialog.buttonAddLevel.triggered.connect(self.addLevel)
@@ -143,11 +163,27 @@ class BIM_Views:
             self.dialog.buttonSaveView.triggered.connect(self.saveView)
             self.dialog.buttonRename.triggered.connect(self.rename)
             self.dialog.buttonActive.triggered.connect(lambda: BIM_Views.activate(self.dialog))
+            self.dialog.buttonAddNamedView.triggered.connect(self.addNamedView)
+            self.dialog.buttonSaveNamedOverrides.triggered.connect(self.saveNamedViewOverrides)
+            self.dialog.buttonDeleteNamedView.triggered.connect(self.deleteNamedView)
+            self.dialog.buttonRenameNamedView.triggered.connect(self.renameNamedView)
             self.dialog.tree.itemClicked.connect(self.select)
             self.dialog.tree.itemDoubleClicked.connect(show)
             self.dialog.viewtree.itemDoubleClicked.connect(show)
             self.dialog.tree.itemChanged.connect(self.editObject)
             self.dialog.tree.customContextMenuRequested.connect(self.onContextMenu)
+
+            # 3D View reset button
+            btn3d = QtGui.QPushButton(
+                QtGui.QIcon(":/icons/BIM_3DView.svg"),
+                translate("BIM", "  3D View"),
+            )
+            btn3d.setToolTip(
+                translate("BIM", "Show all levels and reset to 3D perspective view")
+            )
+            btn3d.setIconSize(QtCore.QSize(16, 16))
+            btn3d.clicked.connect(self.reset3DView)
+            self.dialog.verticalLayout.insertWidget(0, btn3d)
             # delay connecting after FreeCAD finishes setting up
             QtCore.QTimer.singleShot(UPDATEINTERVAL, self.connectDock)
 
@@ -260,6 +296,7 @@ class BIM_Views:
                                             if Draft.getType(subSubObj) == "WorkingPlaneProxy":
                                                 wp, _ = getTreeViewItem(subSubObj)
                                                 lv.addChild(wp)
+                                        _add_named_view_items(lv, subObj)
                                         lvHold.append((lv, lvH))
                                 sortLvHold = sorted(lvHold, key=lambda x: x[1])
                                 sortLvItems = [item[0] for item in sortLvHold]
@@ -284,6 +321,7 @@ class BIM_Views:
                                     if Draft.getType(subObj) == "WorkingPlaneProxy":
                                         wp, _ = getTreeViewItem(subObj)
                                         lv.addChild(wp)
+                                _add_named_view_items(lv, obj)
                                 lvHold.append((lv, lvH))
                         if obj and (t == "WorkingPlaneProxy"):
                             if obj.getParent() and obj.getParent().IfcType == "Building Storey":
@@ -383,6 +421,8 @@ class BIM_Views:
         "selects a doc object corresponding to an item"
 
         item.setSelected(True)
+        if item.toolTip(0).startswith("named_view:"):
+            return  # named view items have no corresponding document object
         name = item.toolTip(0)
         if name:
             obj = FreeCAD.ActiveDocument.getObject(name)
@@ -483,6 +523,45 @@ class BIM_Views:
                 obj.Label = item.text(column)
             if column == 1:
                 obj.Placement.Base.z = FreeCAD.Units.parseQuantity(item.text(column))
+
+    def reset3DView(self):
+        "Show all levels, deactivate the active level, and return to perspective isometric view"
+        import Draft
+        import WorkingPlane
+
+        if not FreeCAD.ActiveDocument:
+            return
+
+        # Deactivate the active level/container
+        view = FreeCADGui.ActiveDocument.ActiveView
+        for context in ("Arch", "NativeIFC"):
+            active = view.getActiveObject(context)
+            if active:
+                view.setActiveObject(context, None)
+                if (
+                    hasattr(active, "ViewObject")
+                    and hasattr(active.ViewObject, "Proxy")
+                    and hasattr(active.ViewObject.Proxy, "setWorkingPlane")
+                ):
+                    active.ViewObject.Proxy.setWorkingPlane(restore=True)
+
+        # Reset working plane to global XY
+        WorkingPlane.get_working_plane().set_to_top()
+
+        # Show all levels
+        for obj in FreeCAD.ActiveDocument.Objects:
+            t = Draft.getType(obj)
+            is_storey = (
+                t in ["BuildingPart", "IfcBuildingStorey"]
+                or getattr(obj, "IfcType", "") == "Building Storey"
+            )
+            if is_storey and getattr(obj, "IfcType", "") != "Building":
+                obj.ViewObject.Visibility = True
+        FreeCAD.ActiveDocument.recompute()
+
+        FreeCADGui.runCommand("Std_PerspectiveCamera")
+        view.viewIsometric()
+        FreeCADGui.SendMsgToActiveView("ViewFit")
 
     def toggle(self):
         "toggle selected item on/off"
@@ -597,18 +676,198 @@ class BIM_Views:
         """Fires the context menu"""
         import Draft
 
-        self.dialog.buttonAddProxy.setEnabled(True)
-        selobj = self.dialog.tree.currentItem()
-        if selobj:
-            selobj = FreeCAD.ActiveDocument.getObject(selobj.toolTip(0))
+        selitem = self.dialog.tree.currentItem()
+        is_named_view = False
+        is_level = False
+        if selitem:
+            if selitem.toolTip(0).startswith("named_view:"):
+                is_named_view = True
+            else:
+                selobj = FreeCAD.ActiveDocument.getObject(selitem.toolTip(0))
+                if selobj:
+                    t = Draft.getType(selobj)
+                    is_level = t in ["BuildingPart", "IfcBuildingStorey"] or getattr(
+                        selobj, "IfcType", ""
+                    ) in ["Building Storey", "IfcBuildingStorey"]
+
+        # Level/proxy actions — visible when not on a named view
+        for btn_name in ["Active", "AddLevel", "AddProxy", "Delete", "Toggle",
+                         "Isolate", "SaveView", "Rename"]:
+            getattr(self.dialog, "button" + btn_name).setVisible(not is_named_view)
+
+        # "Add Floor Plan View..." only makes sense on a level row
+        self.dialog.buttonAddNamedView.setVisible(is_level and not is_named_view)
+
+        # Named-view-specific actions
+        self.dialog.buttonSaveNamedOverrides.setVisible(is_named_view)
+        self.dialog.buttonDeleteNamedView.setVisible(is_named_view)
+        self.dialog.buttonRenameNamedView.setVisible(is_named_view)
+
+        if not is_named_view and selitem:
+            selobj = FreeCAD.ActiveDocument.getObject(selitem.toolTip(0))
             if selobj:
-                if Draft.getType(selobj).startswith("Ifc"):
-                    self.dialog.buttonAddProxy.setEnabled(False)
-                if FreeCADGui.ActiveDocument.ActiveView.getActiveObject("Arch") == selobj:
-                    self.dialog.buttonActive.setChecked(True)
-                else:
-                    self.dialog.buttonActive.setChecked(False)
+                self.dialog.buttonAddProxy.setEnabled(not Draft.getType(selobj).startswith("Ifc"))
+                active = FreeCADGui.ActiveDocument.ActiveView.getActiveObject("Arch")
+                self.dialog.buttonActive.setChecked(active == selobj)
+
         self.dialog.menu.exec_(self.dialog.tree.mapToGlobal(pos))
+
+    def addNamedView(self):
+        """Add a named floor plan view to the currently selected level."""
+        import uuid
+        from PySide import QtCore, QtGui
+
+        vm = findWidget()
+        if not vm or not FreeCAD.ActiveDocument:
+            return
+        selitem = vm.tree.currentItem()
+        if not selitem:
+            return
+        # Accept either a level item or a named-view item (use its parent level)
+        if selitem.toolTip(0).startswith("named_view:"):
+            data = selitem.data(0, QtCore.Qt.UserRole)
+            level_name = data["level"] if data else None
+        else:
+            level_name = selitem.toolTip(0)
+        if not level_name:
+            return
+        level_obj = FreeCAD.ActiveDocument.getObject(level_name)
+        if not level_obj:
+            return
+        name, ok = QtGui.QInputDialog.getText(
+            None,
+            translate("BIM", "Add Floor Plan View"),
+            translate("BIM", "View name:"),
+            text=translate("BIM", "Floor Plan"),
+        )
+        if not ok or not name.strip():
+            return
+        configs = _get_view_configs()
+        if level_name not in configs:
+            configs[level_name] = []
+        configs[level_name].append(
+            {
+                "uid": uuid.uuid4().hex[:8],
+                "name": name.strip(),
+                "show_above": False,
+                "extra_visible": [],
+                "extra_hidden": [],
+            }
+        )
+        _set_view_configs(configs)
+        self.update(False)
+
+    def deleteNamedView(self):
+        """Delete the currently selected named view."""
+        from PySide import QtCore
+
+        vm = findWidget()
+        if not vm or not FreeCAD.ActiveDocument:
+            return
+        selitem = vm.tree.currentItem()
+        if not selitem or not selitem.toolTip(0).startswith("named_view:"):
+            return
+        data = selitem.data(0, QtCore.Qt.UserRole)
+        if not data:
+            return
+        level_name = data["level"]
+        uid = data["uid"]
+        configs = _get_view_configs()
+        if level_name in configs:
+            configs[level_name] = [v for v in configs[level_name] if v["uid"] != uid]
+            if not configs[level_name]:
+                del configs[level_name]
+        _set_view_configs(configs)
+        self.update(False)
+
+    def renameNamedView(self):
+        """Rename the currently selected named view."""
+        from PySide import QtCore, QtGui
+
+        vm = findWidget()
+        if not vm or not FreeCAD.ActiveDocument:
+            return
+        selitem = vm.tree.currentItem()
+        if not selitem or not selitem.toolTip(0).startswith("named_view:"):
+            return
+        data = selitem.data(0, QtCore.Qt.UserRole)
+        if not data:
+            return
+        name, ok = QtGui.QInputDialog.getText(
+            None,
+            translate("BIM", "Rename View"),
+            translate("BIM", "View name:"),
+            text=data["name"],
+        )
+        if not ok or not name.strip():
+            return
+        configs = _get_view_configs()
+        level_name = data["level"]
+        if level_name in configs:
+            for v in configs[level_name]:
+                if v["uid"] == data["uid"]:
+                    v["name"] = name.strip()
+                    break
+        _set_view_configs(configs)
+        self.update(False)
+
+    def saveNamedViewOverrides(self):
+        """Save current visibility state as overrides for the selected named view."""
+        import Draft
+        from PySide import QtCore
+
+        vm = findWidget()
+        if not vm or not FreeCAD.ActiveDocument:
+            return
+        selitem = vm.tree.currentItem()
+        if not selitem or not selitem.toolTip(0).startswith("named_view:"):
+            return
+        data = selitem.data(0, QtCore.Qt.UserRole)
+        if not data:
+            return
+        level_name = data["level"]
+        uid = data["uid"]
+        level_obj = FreeCAD.ActiveDocument.getObject(level_name)
+        if not level_obj:
+            return
+
+        def _placement_z(o):
+            if hasattr(o, "getGlobalPlacement"):
+                return o.getGlobalPlacement().Base.z
+            return o.Placement.Base.z
+
+        active_z = _placement_z(level_obj)
+        show_above = False
+        extra_hidden = []
+        extra_visible = []
+
+        for obj in FreeCAD.ActiveDocument.Objects:
+            if not hasattr(obj, "ViewObject"):
+                continue
+            t = Draft.getType(obj)
+            is_storey = (
+                t in ["BuildingPart", "IfcBuildingStorey"]
+                or getattr(obj, "IfcType", "") == "Building Storey"
+            ) and getattr(obj, "IfcType", "") != "Building"
+            if is_storey:
+                if _placement_z(obj) > active_z + 1.0 and obj.ViewObject.Visibility:
+                    show_above = True
+            else:
+                if not obj.ViewObject.Visibility:
+                    extra_hidden.append(obj.Name)
+
+        configs = _get_view_configs()
+        if level_name in configs:
+            for v in configs[level_name]:
+                if v["uid"] == uid:
+                    v["show_above"] = show_above
+                    v["extra_hidden"] = extra_hidden
+                    v["extra_visible"] = extra_visible
+                    break
+        _set_view_configs(configs)
+        FreeCAD.Console.PrintMessage(
+            translate("BIM", "View overrides saved for '{}'.\n").format(data["name"])
+        )
 
     def getViews(self):
         """Returns a list of 2D views"""
@@ -633,6 +892,82 @@ class BIM_Views:
 # These functions need to be localized outside the command class, as they are used outside this module
 
 
+def _get_view_configs():
+    """Return the named floor-plan view configs stored in document metadata."""
+    import json
+
+    if not FreeCAD.ActiveDocument:
+        return {}
+    try:
+        raw = FreeCAD.ActiveDocument.Meta.get("BimFloorPlanViews", "{}")
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _set_view_configs(configs):
+    """Persist named floor-plan view configs into document metadata."""
+    import json
+
+    if not FreeCAD.ActiveDocument:
+        return
+    meta = FreeCAD.ActiveDocument.Meta
+    meta["BimFloorPlanViews"] = json.dumps(configs)
+    FreeCAD.ActiveDocument.Meta = meta
+
+
+def _add_named_view_items(parent_item, level_obj):
+    """Add named-view child rows to a level QTreeWidgetItem."""
+    from PySide import QtCore, QtGui
+
+    configs = _get_view_configs()
+    views = configs.get(level_obj.Name, [])
+    icon = QtGui.QIcon(":/icons/BIM_WPView.svg")
+    for vc in views:
+        it = QtGui.QTreeWidgetItem([vc["name"], ""])
+        it.setIcon(0, icon)
+        # tooltip prefix "named_view:" lets show() / select() identify these items
+        it.setToolTip(0, "named_view:" + vc["uid"])
+        it.setData(0, QtCore.Qt.UserRole, {"type": "named_view", "level": level_obj.Name, **vc})
+        parent_item.addChild(it)
+
+
+def _activate_named_view(level_obj, config):
+    """Activate a named floor-plan view: apply base floor-plan then view overrides."""
+    import Draft
+
+    # Base: standard floor-plan (camera + hide levels above)
+    _activate_floor_plan_view(level_obj)
+
+    def _placement_z(o):
+        if hasattr(o, "getGlobalPlacement"):
+            return o.getGlobalPlacement().Base.z
+        return o.Placement.Base.z
+
+    # If show_above, re-show all storeys that the floor-plan hid
+    if config.get("show_above"):
+        for obj in FreeCAD.ActiveDocument.Objects:
+            t = Draft.getType(obj)
+            is_storey = (
+                t in ["BuildingPart", "IfcBuildingStorey"]
+                or getattr(obj, "IfcType", "") == "Building Storey"
+            ) and getattr(obj, "IfcType", "") != "Building"
+            if is_storey:
+                obj.ViewObject.Visibility = True
+
+    # Apply per-object overrides
+    for name in config.get("extra_visible", []):
+        obj = FreeCAD.ActiveDocument.getObject(name)
+        if obj and hasattr(obj, "ViewObject"):
+            obj.ViewObject.Visibility = True
+    for name in config.get("extra_hidden", []):
+        obj = FreeCAD.ActiveDocument.getObject(name)
+        if obj and hasattr(obj, "ViewObject"):
+            obj.ViewObject.Visibility = False
+
+    FreeCAD.ActiveDocument.recompute()
+
+
 def findWidget():
     "finds the manager widget, if present"
 
@@ -648,6 +983,7 @@ def findWidget():
 def show(item, column=None):
     "item has been double-clicked"
     import Draft
+    from PySide import QtCore
 
     obj = None
     vm = findWidget()
@@ -661,9 +997,23 @@ def show(item, column=None):
             if vm:
                 vm.tree.editItem(item, column)
                 return
-        else:
-            # TODO find a way to not edit the object name
-            obj = FreeCAD.ActiveDocument.getObject(item.toolTip(0))
+
+        # Check if this is a named view item
+        if item.toolTip(0).startswith("named_view:"):
+            data = item.data(0, QtCore.Qt.UserRole)
+            if data:
+                level_obj = FreeCAD.ActiveDocument.getObject(data["level"])
+                if level_obj:
+                    from draftutils.gui_utils import toggle_working_plane
+                    toggle_working_plane(level_obj, None, restore=True)
+                    FreeCADGui.Selection.clearSelection()
+                    _activate_named_view(level_obj, data)
+            if vm:
+                vm.lastSelected = item.toolTip(0)
+            return
+
+        # TODO find a way to not edit the object name
+        obj = FreeCAD.ActiveDocument.getObject(item.toolTip(0))
     if obj:
         FreeCADGui.Selection.clearSelection()
         FreeCADGui.Selection.addSelection(obj)
@@ -701,6 +1051,7 @@ def show(item, column=None):
             type = Draft.getType(obj)
             if type == "BuildingPart" or type == "IfcBuildingStorey":
                 BIM_Views.activate()
+                _activate_floor_plan_view(obj)
 
     if vm:
         # store the last double-clicked item for the BIM WPView command
@@ -708,6 +1059,55 @@ def show(item, column=None):
             vm.lastSelected = item
         else:
             vm.lastSelected = item.toolTip(0)
+
+
+def _activate_floor_plan_view(active_obj):
+    """Switch to a Revit-style floor plan view for the given BuildingPart level.
+
+    - Hides all levels above the active one, shows current level and below.
+    - Switches the 3D view to top-down orthographic and fits visible objects.
+    Skips objects whose IfcType is "Building" (containers, not storeys).
+    """
+    import Draft
+
+    # Skip building containers — only act on storeys
+    if getattr(active_obj, "IfcType", "") == "Building":
+        return
+
+    def _placement_z(o):
+        if hasattr(o, "getGlobalPlacement"):
+            return o.getGlobalPlacement().Base.z
+        return o.Placement.Base.z
+
+    active_z = _placement_z(active_obj)
+
+    for obj in FreeCAD.ActiveDocument.Objects:
+        t = Draft.getType(obj)
+        is_storey = (
+            t in ["BuildingPart", "IfcBuildingStorey"]
+            or getattr(obj, "IfcType", "") == "Building Storey"
+        )
+        if not is_storey:
+            continue
+        if getattr(obj, "IfcType", "") == "Building":
+            continue
+        level_z = _placement_z(obj)
+        obj.ViewObject.Visibility = level_z <= active_z + 1.0  # 1 mm tolerance
+
+    FreeCAD.ActiveDocument.recompute()
+
+    view = FreeCADGui.ActiveDocument.ActiveView
+    if not hasattr(view, "viewTop"):
+        # find the first 3D view if the active window is something else
+        for w in FreeCADGui.getMainWindow().getWindows():
+            if hasattr(w, "viewTop"):
+                view = w
+                FreeCADGui.getMainWindow().setActiveWindow(w)
+                break
+
+    FreeCADGui.runCommand("Std_OrthographicCamera")
+    view.viewTop()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
 
 
 def isView(obj):
